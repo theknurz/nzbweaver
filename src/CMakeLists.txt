@@ -1,0 +1,16 @@
+file(GLOB nntpSrc "${CMAKE_CURRENT_SOURCE_DIR}/*.c")
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SSL REQUIRED openssl)
+pkg_check_modules(LIBXML REQUIRED expat)
+pkg_check_modules(LIBPCRE REQUIRED libpcre2-8)
+add_compile_options(-Wall -Wextra -Wpedantic)
+add_executable(nzbweaver ${nntpSrc})
+
+target_compile_options(nzbweaver PRIVATE $<$<CONFIG:Debug>:-Wall -Wextra -Wpedantic> $<$<CONFIG:Release>:-O2>)
+
+target_include_directories(nzbweaver PRIVATE ${SSL_INCLUDE_DIRS} ${LIBXML_INCLUDE_DIRS} ${LIBPCRE_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/rapidyenc)
+target_link_libraries(nzbweaver PRIVATE ${SSL_LIBRARIES} ${LIBXML_LIBRARIES} ${LIBPCRE_LIBRARIES} rapidyenc_static)
+target_compile_options(nzbweaver PRIVATE ${SSL_CFLAGS_OTHER} ${LIBXML_CFLAGS_OTHER} ${LIBPCRE_CFLAGS_OTHER} ${LIBCURSES_CFLAGS_OTHER})
+target_compile_definitions(nzbweaver PRIVATE _LARGEFILE64_SOURCE PCRE2_CODE_UNIT_WIDTH=8 _POSIX_C_SOURCE=200809L _FILE_OFFSET_BITS=64 _XOPEN_SOURCE=600 _DEFAULT_SOURCE)
