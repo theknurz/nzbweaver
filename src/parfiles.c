@@ -2,7 +2,7 @@
 
 // the magic sequence 
 const unsigned char magic_sequence_check[]={"PAR2\0PKT"};
-
+const unsigned char magic_filepacket_check[]={"PAR 2.0\0FileDesc"};
 // the filenames:
 char **par_filenames = NULL;
 unsigned int par_filenames_length = 0;
@@ -37,7 +37,7 @@ bool get_par2_filenames(char* filename) {
     struct par_file   file;
     FILE*   io_par2;
 
-    io_par2 = fopen(filename, "r");
+    io_par2 = fopen(filename, "rb");
     if (!io_par2)
         return false;
 
@@ -47,10 +47,10 @@ bool get_par2_filenames(char* filename) {
 
     while (data_pos < data_size) {
         fread(&header, sizeof(struct par_header), 1, io_par2);
-        if (!compare_par2_fields(header.magic_sequence, "PAR2\0PKT", 8))
+        if (!compare_par2_fields(header.magic_sequence, magic_sequence_check, 8))
             return false;   // is it valid ?
         // we only want filedescription packets.
-        if (!compare_par2_fields(header.type, "PAR 2.0\0FileDesc", 16)) {
+        if (!compare_par2_fields(header.type, magic_filepacket_check, 16)) {
             fseek(io_par2, header.packet_length-sizeof(struct par_header), SEEK_CUR);
             data_pos += (header.packet_length - sizeof(struct par_header));  // skip this packet it's not the one we want.
             continue;
@@ -66,13 +66,12 @@ bool get_par2_filenames(char* filename) {
         data_pos += header.packet_length;  // jump to next packet
         par_filenames_length++; // increase array counter
     }
-
     fclose (io_par2);
 
     return true;
 }
 
-bool compare_par2_fields(uint8_t *parType, char *typeCheck, uint8_t len) {
+bool compare_par2_fields(uint8_t *parType, const unsigned char *typeCheck, uint8_t len) {
     for (uint8_t i = 0; i < len; i++) {
         if (parType[i] != (uint8_t)typeCheck[i])
             return false;

@@ -392,12 +392,7 @@ void mw_quit_and_clean(void) {
 /// @brief the Mainloop in the calling thread (reacts on keystrokes ...)
 /// @param  
 void mw_loop(void) {
-    struct sigaction sigusr_action = { 0 };
     extern struct NZB nzb_tree;
-
-    // to EINTR getch()
-    sigusr_action.sa_handler = mw_SIGUSR;
-    sigaction(SIGUSR1, &sigusr_action, NULL);
 
     q_printf ("Starting download...\n");
 
@@ -538,9 +533,4 @@ void mw_print_overview(void) {
         printf ("(%.2f%%)\t", pct_done);
     }
     printf ("Speed:%s/s\tThreads:%i\r", mw_val_to_hr_string(nzb_tree.release_downloaded / secondspassed), mw_max_threads);
-}
-
-void mw_SIGUSR(int sig) {
-    (void)sig;
-    return;
 }

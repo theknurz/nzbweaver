@@ -23,6 +23,6 @@ extern unsigned int par_filenames_length;
 extern char **par_filenames;
 
 bool get_par2_filenames(char* filename);
-bool compare_par2_fields(uint8_t *parType, char *typeCheck, uint8_t len);
+bool compare_par2_fields(uint8_t *parType, const unsigned char *typeCheck, uint8_t len);
 bool is_par2_list(char* filename);
 #endif
