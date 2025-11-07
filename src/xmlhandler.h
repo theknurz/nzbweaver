@@ -25,7 +25,7 @@ struct NZBFile {
     unsigned int    open_segments;      // like requested but the request is not finished.
     uint64_t        joined_size;        // for progressbar to "join" all files
     uint8_t         state;              // one of the NZBFile_State
-    unsigned int    current_segment;
+    unsigned int    current_segment;    // moved from static to this point here
     char            *final_filename;    // a pointer either to filename or yenc_filename
 };
 
@@ -36,8 +36,11 @@ struct NZB {
     uint64_t        release_size;
     uint64_t        release_downloaded;
     char            *download_destination;
-    unsigned int    current_file;        // this is a 0-based C array-index
-
+    unsigned int    current_file;        // 
+    bool            skip_recovery;           // true = download all non *.par2 files.
+    int             rename_files_to;    // See enum NZBRename
+    struct NZBFile  *main_par2;
+    bool            post_join_files;
 };
 
 enum NZBFile_State {
@@ -45,6 +48,12 @@ enum NZBFile_State {
     NFState_Downloading = 1,
     NFState_Joining,
     NFState_Done
+};
+
+enum NZBRename {
+    NZBRename_undefined = 0,
+    NZBRename_NZB = 1,
+    NZBRename_yEnc
 };
 // END 
 

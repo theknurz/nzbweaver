@@ -26,7 +26,7 @@ struct NZBSegment* nzb_tree_find_segment_from_file (struct NZBFile *haystack, un
 struct pair *config_server = NULL;
 struct pair *config_downloads = NULL;
 
-struct NZB  nzb_tree = { .files = NULL, .max_files = 0, .name = NULL, .release_size = 0, .current_file = 0, .release_downloaded = 0} ;
+struct NZB  nzb_tree = { .files = NULL, .max_files = 0, .name = NULL, .release_size = 0, .current_file = 0, .release_downloaded = 0, .rename_files_to = 0, .main_par2 = NULL } ;
 bool        parse_is_nzb_head = false;
 XML_Parser  nzbParser; 
 
@@ -282,7 +282,8 @@ void parse_nzb_element_file(const char **attribs, struct NZBFile* file) {
     // we care about subject, everything else is kinda unnecessary for us:
     for (int i=0; attribs[i]; i+=2) {
         if (strcmp(attribs[i], "subject") == 0) {
-            file->filename = contains_filename(attribs[i+1]);
+            if (contains_filename(attribs[i+1], NULL))
+                contains_filename(attribs[i+1], &file->filename);
             break;
         }
     }

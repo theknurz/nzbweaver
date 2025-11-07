@@ -5,7 +5,6 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SSL REQUIRED openssl)
 pkg_check_modules(LIBXML REQUIRED expat)
 pkg_check_modules(LIBPCRE REQUIRED libpcre2-8)
-add_compile_options(-Wall -Wextra -Wpedantic)
 add_executable(nzbweaver ${nntpSrc})
 
 target_compile_options(nzbweaver PRIVATE $<$<CONFIG:Debug>:-Wall -Wextra -Wpedantic> $<$<CONFIG:Release>:-O2>)

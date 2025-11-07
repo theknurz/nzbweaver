@@ -84,45 +84,43 @@ const char *convert_value_to_human(uint64_t value, double *human) {
 
 /// @brief searches for filename in haystack
 /// @param haystack 
-/// @return the filename - caller's the owner
-char* contains_filename(const char *haystack) {
-    char *rv = NULL;
-    const PCRE2_SPTR8 fileQuotRegEx = (PCRE2_SPTR8)"\"(.+)\"";
-    const PCRE2_SPTR8 fileReqEx = (PCRE2_SPTR8)"\\b([^\\s]+\\.\\w{3,4})\\b";
+/// @param dupstr - if !NULL, found string will be strndup()ed.
+/// @return true if a filename was found, false if no filename was found
+bool contains_filename(const char *haystack, char **dupstr) {
+    // (["?].+\..+["?])|([\S]+\.[\S]+)|(.+\.[0-9]{3,})\s
+    const PCRE2_SPTR8 fileExtEnd = (PCRE2_SPTR8)"(\\.\\w+[\\s|\"])";
+    static pcre2_code *comp_a = NULL;
+    static pcre2_match_data *match_data = NULL;
     int pcre_err;
     PCRE2_SIZE errOffset;
-    static pcre2_code *comp_a = NULL, *comp_b = NULL;
+    char* fname_start;
 
-    if (!comp_a || !comp_b) {
-        comp_a = pcre2_compile(fileQuotRegEx, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
+    if (!comp_a) {
+        comp_a = pcre2_compile(fileExtEnd, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
         if (!comp_a)
-            return NULL;
-        comp_b = pcre2_compile(fileReqEx, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
-        if (!comp_b)
-            return NULL;
+            return false;
+        match_data = pcre2_match_data_create_from_pattern(comp_a, NULL);
     }
 
-    pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(comp_a, NULL);
-    PCRE2_SIZE start_offset = 0;
-    // 1st try:
-    while (pcre2_match(comp_a, (const unsigned char*)haystack, PCRE2_ZERO_TERMINATED, start_offset, 0, match_data, NULL) >= 0) {
+    if (pcre2_match(comp_a, (const unsigned char*)haystack, PCRE2_ZERO_TERMINATED, 0, 0, match_data, NULL) >= 0) {
+        // .ext found!
         PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
-        rv = strndup(haystack+ovector[0], (int)(ovector[1]-ovector[0]));
-        start_offset = ovector[1];
+
+        if (haystack[ovector[1]-1] == '"') {
+            fname_start = strchr(haystack, '"');
+            if (!fname_start)
+                fname_start = (char*)haystack;
+            else
+                fname_start++;
+        } else {
+            fname_start = (char*)haystack;
+        }
+
+        if (dupstr) 
+            *dupstr = strndup(fname_start, (int)(&haystack[ovector[1]]-fname_start)-1 );
+        return true;
     }
-    pcre2_match_data_free(match_data);
-    if (rv)
-        return rv;
-    // 2nd try:
-    match_data = pcre2_match_data_create_from_pattern(comp_b, NULL);
-    start_offset = 0;
-    while (pcre2_match(comp_b, (const unsigned char*)haystack, PCRE2_ZERO_TERMINATED, start_offset, 0, match_data, NULL) >= 0) {
-        PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
-        rv = strndup(haystack+ovector[0], (int)(ovector[1]-ovector[0]));
-        start_offset = ovector[1];
-    }
-    pcre2_match_data_free(match_data);
-    return rv;
+    return false;
 }
 
 /// @brief a print that respects the quiet flag
@@ -141,6 +139,9 @@ void q_printf(char* fmt, ...) {
 }
 
 bool string_ends_width(char* haystack, char* needle) {
+    if (!haystack || !needle)
+        return false;
+        
     if (strlen(haystack) < strlen(needle))
         return false;
 
@@ -149,4 +150,55 @@ bool string_ends_width(char* haystack, char* needle) {
         return true;
 
     return false;
+}
+
+/// @brief writes memory to a file - w. errorchecks.
+/// @param filepath 
+/// @param size 
+/// @return 
+bool write_to_file(char* filepath, uint8_t *buffer, uint64_t size) {
+    uint64_t written = 0;
+    FILE*   f_write = NULL;
+
+    f_write = fopen(filepath, "wb");
+    if (!f_write) {
+        LOG_MESSAGE(true, "Could not write %s to disk, errno (%i), %s", filepath, errno, strerror(errno));
+        return false;
+    }
+    
+    written = fwrite(buffer, 1, size, f_write);
+    if (written != size) {
+        LOG_MESSAGE(true, "Only wrote %d out of %d to file %s, errno (%i), %s", written, size, filepath, errno, strerror(errno));
+        fclose (f_write);
+        return false;
+    }
+
+    fflush(f_write);
+    fclose(f_write);
+    return true;
+}
+
+/// @brief allocs and sprintf(...)
+/// @param fmt the Format.
+/// @param the VA_LIST
+/// @return pointer to memory, OWNED BY CALLER.
+char* mprintfv(char *fmt, ...) {
+    va_list ap;
+    size_t len = 0;
+    char *rv = NULL;
+
+    va_start(ap, fmt);
+    len = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+
+    if (!len)
+        return NULL;
+
+    rv = (char*)calloc(len+2, 1);
+    va_start (ap, fmt);
+    vsprintf(rv, fmt, ap);
+    va_end(ap);
+
+    return rv;
+    
 }

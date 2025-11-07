@@ -18,8 +18,9 @@
 const unsigned int  NNTP_READBUFSIZE = 1024;
 
 // non exported vars:
-struct sockaddr_in nntp_server_adress;
-bool isResolved = false;
+struct          sockaddr_in nntp_server_adress;
+bool            isResolved = false;
+unsigned int    nntp_article_fetch_type = NNTP_BODY;
 
 // a nntp-"map":
 struct nntp_map nntp_query_state[] = {
@@ -27,7 +28,8 @@ struct nntp_map nntp_query_state[] = {
     { .state = NNTP_USERNAME, .fmt = "AUTHINFO USER %s\r\n", .multiline = false },
     { .state = NNTP_PASSWORD, .fmt = "AUTHINFO PASS %s\r\n", .multiline = false },
     { .state = NNTP_FETCH, .fmt = "ARTICLE <%s>\r\n", .multiline = true },
-    { .state = NNTP_BODY, .fmt = "BODY <%s>\r\n", .multiline = true }
+    { .state = NNTP_BODY, .fmt = "BODY <%s>\r\n", .multiline = true },
+    { .state = NNTP_QUIT, .fmt = "QUIT\r\n", .multiline = false }
 };
 
 /// @brief connects to adress:port, remembers SSL for later TLS() usage ?
@@ -151,7 +153,7 @@ uint64_t nntp_read(struct nntp_server *connection, char **reply, bool *isOk) {
 
     // On error, -1 is returned, and errno is set to indicate the error.
     if (bytes_read == -1) {
-        dbgprint("read(...) returned error: (%i) %s\n", h_errno, gai_strerror(h_errno));
+        LOG_MESSAGE(false, "read(...) returned error: (%i) %s\n", h_errno, gai_strerror(h_errno));
         free (bfReply);
         *reply = NULL;
         return 0;
@@ -226,7 +228,7 @@ bool nntp_get_article(struct nntp_server *connection, char *aID, char **buffer) 
         return false;
 
     // write ARTICLE <ID> to server
-    if (!nntp_write(connection, NNTP_FETCH, aID))
+    if (!nntp_write(connection, connection->use_body ? NNTP_BODY : NNTP_FETCH, aID))
         return false;
     
     // get the reply from server.
@@ -244,6 +246,18 @@ bool nntp_get_article(struct nntp_server *connection, char *aID, char **buffer) 
 
     *buffer = read_buffer;
     return true;
+}
+
+/// @brief sends quit, disconnects socket.
+/// @param  
+void nntp_disconnect(struct nntp_server *connection) {
+    char *buffer = NULL;
+    bool isOk;
+
+    nntp_write(connection, NNTP_QUIT);
+    nntp_read(connection, &buffer, &isOk);
+    close(connection->fd_socket);
+    connection->fd_socket = -1;
 }
 
 /// @brief sends/auths 

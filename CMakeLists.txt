@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 4.1)
 project (nzbweaver C)
 
+# crcutil has to be disabled (throws some c++ error)
 set (BUILD_NATIVE ON CACHE BOOL "Force Native Build" FORCE)
 set (DISABLE_AVX256 OFF CACHE BOOL "Enable AVX256" FORCE)
 set (DISABLE_CRCUTIL ON CACHE BOOL "Enable crcutil lib." FORCE)

@@ -22,7 +22,8 @@ struct par_file {
 extern unsigned int par_filenames_length;
 extern char **par_filenames;
 
-bool get_par2_filenames(char* filename);
+bool get_par2_filenames(struct NZBFile *filename, bool *isMain);
+bool get_par2_filenames_from_memory(char *parmem, size_t parmemsize, bool *isMain);
 bool compare_par2_fields(uint8_t *parType, const unsigned char *typeCheck, uint8_t len);
 bool is_par2_list(char* filename);
 #endif

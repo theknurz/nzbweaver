@@ -15,6 +15,7 @@ enum NNTP_STATE {
     NNTP_PASSWORD,
     NNTP_FETCH,
     NNTP_BODY,
+    NNTP_QUIT,
     NNTP_IDLE = 255
 };
 
@@ -46,6 +47,7 @@ struct nntp_server {
     SSL         *ssl_fd_socket;
     uint16_t    connectionID;
     int         nntp_server_state;
+    bool        use_body;
 };
 
 bool nntp_connect(struct nntp_server *connection);
@@ -55,8 +57,8 @@ bool nntp_write(struct nntp_server *connection, int req_nntpstate, ...);
 bool nntp_get_article(struct nntp_server *connection, char *aID, char **buffer);
 int nntp_get_code_from_string(char *buffer, bool *isOk);
 bool nntp_authenticate(struct nntp_server *connection, char *username, char *password);
-// bool nntp_get_binary_from_article (char *bufferIn, char **binaryOut, size_t *outSize, int *crcOK);
 struct pair *nntp_get_yenc_meta (char *yencLine);
 bool nntp_get_yenc_header_begin_end(char *encoded_buffer, char **yenc_data_begin, char **yenc_data_end);
 size_t nntp_decode_yenc (char *encoded_header_buffer, char **outBinary, int *isCRCOk);
+void nntp_disconnect(struct nntp_server *connection);
 #endif
