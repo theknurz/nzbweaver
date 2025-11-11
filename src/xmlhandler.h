@@ -30,7 +30,8 @@ struct NZBFile {
 };
 
 struct NZB {
-    char            *name;              // the "release" name
+    char            *name;              // the file name, w. path
+    char            *display_name;      // the display-name w/o path and extension.
     struct NZBFile  *files;             // description of files.
     unsigned int    max_files;          // size of array
     uint64_t        release_size;
@@ -39,8 +40,7 @@ struct NZB {
     unsigned int    current_file;        // 
     bool            skip_recovery;           // true = download all non *.par2 files.
     int             rename_files_to;    // See enum NZBRename
-    struct NZBFile  *main_par2;
-    bool            post_join_files;
+    bool            post_join_files;    // .001, .002... files
 };
 
 enum NZBFile_State {
@@ -86,6 +86,4 @@ bool nzb_load(char *filename);
 bool nzb_tree_next_segment (struct NZBFile **inpFile, struct NZBSegment **inpSeg);
 unsigned int nzb_get_binary_position_of_segment (struct NZBFile *file, unsigned int nzbNum);
 void cleanup_xmlhandler(void);
-unsigned int nzb_get_highest_segment_number (struct NZBFile *file);
-struct NZBSegment *nzb_get_segment_by_number (struct NZBFile *file, unsigned int segment_number);
 #endif

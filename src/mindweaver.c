@@ -13,7 +13,10 @@
 // variables:
 struct nntp_server *nntp_connections = NULL;
 pthread_t          *mw_threads = NULL;
-pthread_mutex_t     last_check_block = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t     mw_last_check_block = PTHREAD_MUTEX_INITIALIZER;
+int                 mw_cancel_thresh_pct = 0;
+uint64_t            mw_failed_segments = 0;
+uint64_t            mw_expected_segments = 0;
 
 struct nntp_server nntp_server_info;
 unsigned int mw_max_threads = 0;
@@ -26,6 +29,10 @@ struct segment_to_filename *segments_filenames = NULL;
 uint64_t        epoch_download_start;
 uint64_t        epoch_download_end;
 uint64_t        transfered_bytes;
+
+bool            mw_post_ok_operation = true;  
+
+char            *mw_display_name = NULL;
 
 // functions:
 void *mw_thread_work (void* arg);
@@ -47,7 +54,7 @@ const char *nzb_status_text[] = {
 /// @return 
 bool mw_connect(char *address, uint16_t port, char *username, char *password, bool useSSL, unsigned int threads) {
     mw_max_threads = threads;
-
+    extern struct NZB nzb_tree;
     
     if (!nntp_connections) {
         // copy the data so the caller doesn't have to care about lifetime:
@@ -72,9 +79,11 @@ bool mw_connect(char *address, uint16_t port, char *username, char *password, bo
         memset(mw_thread_infos, 0, sizeof(struct thread_user_data)*threads);
     }
 
-    // check if BODY <id> is okay and if first NZB File is a par2, if yes, download and parse it.
-    //if (!mw_prepare_download())
-    //        return false;
+    if (pair_find(config_downloads, "cancelthreshpct"))
+        mw_cancel_thresh_pct = atoi(pair_find(config_downloads, "cancelthreshpct"));
+
+    for (unsigned int curFile = 0; curFile < nzb_tree.max_files; curFile++)
+        mw_expected_segments += nzb_tree.files[curFile].segmentsSize;
 
     epoch_download_start = time(NULL);
 
@@ -160,17 +169,21 @@ void *mw_thread_work (void* arg) {
     extern struct NZB nzb_tree;
     char    *recvBuffer = NULL;
     bool    am_i_last_thread = true;
+    double  pct_failed = 0.;
 
     // connect
-    if (!nntp_connect(serverInfo))
-        return NULL;
-
+    if (!nntp_connect(serverInfo)) {
+        LOG_MESSAGE(false, "thread %i connection failed");
+        userData->connection->work_done = true;
+        goto thread_exit;
+    }
 
     // if we have username/password, authenticate
     if (serverInfo->username) {
         if (!nntp_authenticate(serverInfo, serverInfo->username, serverInfo->password)) {
             LOG_MESSAGE(false, "thread %i auth failed\n", userData->connection->connectionID);
-            return NULL;
+            userData->connection->work_done = true;
+            goto thread_exit;
         }
     }
 
@@ -195,15 +208,25 @@ void *mw_thread_work (void* arg) {
         // request an article from the server -> this can and will fail!
         if (mw_get_binary_from_article(userData, curFile, curSeg, &recvBuffer)) {
             write_to_file(fullfilePath, (uint8_t*)recvBuffer, curSeg->decoded_bytes);
+            free(fullfilePath);
             free (recvBuffer);
             recvBuffer = NULL;
+        } else {
+            mw_failed_segments++;
+
+            pct_failed = (double)(mw_expected_segments-mw_failed_segments)/(double)mw_expected_segments;
+            pct_failed *= 100.;
+
+            if ((mw_cancel_thresh_pct > 0) && ((int)pct_failed < mw_cancel_thresh_pct)) {
+                LOG_MESSAGE(false, "Cancel-Threshold (%i) was reached, stopping download.", mw_cancel_thresh_pct);
+                mw_quit_download = true;
+                userData->connection->work_done = true;
+                mw_post_ok_operation = false;   // don't try to assemble..
+                goto thread_exit;
+            }
         }
 
-        if (curFile->open_segments > 0)
-             curFile->open_segments--;
-        else
-            LOG_MESSAGE(false, "SYNC ERROR: %s -> open_segments would have been -1!", curFile->filename);
-
+        curFile->open_segments--;
         curFile->remaining_segments--;
 
         LOG_MESSAGE(false, "Thread: %d loop ended, remaining_segments:%d, open_segments:%d, Filename: \"%s\"\n", userData->connection->connectionID,        
@@ -214,7 +237,8 @@ void *mw_thread_work (void* arg) {
         LOG_MESSAGE(false, "Thread %i has finished it's work, exiting..", userData->connection->connectionID);
     userData->connection->work_done = true;
 
-    pthread_mutex_lock(&last_check_block);
+thread_exit:
+    pthread_mutex_lock(&mw_last_check_block);
     for (unsigned int i=0; i < mw_max_threads; i++) {
         if (nntp_connections[i].work_done == false) {
             am_i_last_thread = false;
@@ -224,7 +248,7 @@ void *mw_thread_work (void* arg) {
 
     if (am_i_last_thread)
         mw_runLoop = false;
-    pthread_mutex_unlock(&last_check_block);
+    pthread_mutex_unlock(&mw_last_check_block);
     nntp_disconnect(serverInfo);
     pthread_exit(NULL);
 }
@@ -311,22 +335,6 @@ bool mw_parse_yenc_header (char *yEncStart, struct NZBFile *curFile, uint64_t **
         *filesize = NULL;
 
     return true;
-}
-
-/// @brief tries to guess the right filename
-/// @param curFile - the current File you're joining.
-/// @return either a pointer to a valid string or NULL in panic.
-char* mw_set_filename(struct NZBFile* curFile) {
-    extern struct NZB nzb_tree;
-   
-    // some sanity checks 
-    if ((nzb_tree.rename_files_to == NZBRename_undefined || nzb_tree.rename_files_to == NZBRename_yEnc) && !curFile->yenc_filename)
-        return NULL;
-    if (nzb_tree.rename_files_to == NZBRename_NZB && !curFile->filename)
-        return NULL;
-    
-   
-    return NULL;
 }
 
 /// @brief The last thing we do for sure: Join every segment to files.
@@ -421,11 +429,14 @@ void mw_loop(void) {
         usleep(100*1000);   // 10 updates per second ?
     }
 
-    q_printf ("\nDownload finished, assembling segments...\n");
-    
-    mw_post_rename();
-    mw_post_checkrepair();
+    mw_print_overview();
 
+    if (mw_post_ok_operation) {
+        q_printf ("\nDownload finished, assembling segments...\n");
+        mw_post_rename();
+    } else {
+        q_printf ("\nDownload failed.\n");
+    }
 }
 
 /// @brief this what happens AFTER the network-downloads/decoding
@@ -434,12 +445,13 @@ void mw_post_rename(void) {
     unsigned int filecnt;
     extern struct NZB nzb_tree;
     struct NZBFile *smallest_parfile = NULL;
+    bool check_repair_ok = true;
 
     /* here we are: the filename game
      * What I found about usenet, nzb, yenc-headers and par2:
-     * IF we have par2, ALWAYS use the files in the FileDescr. Blocks of PAR2 - A L W A Y S
-     * IF we don't have par2, prefer yEnc OVER nzb - but check for filename because
-     * IF yEnc has not a valid filename use the NZB provided filename.    */
+     * 1. IF we have par2, ALWAYS use the files in the FileDescr. Blocks of PAR2 - A L W A Y S
+     * 2. IF we don't have par2, prefer yEnc OVER nzb - but check for filename because
+     * 3. IF yEnc has not a valid filename use the NZB provided filename.    */
     for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
         struct NZBFile *curFile = &nzb_tree.files[filecnt];
         if ((string_ends_width(curFile->filename, ".par2")) || (string_ends_width(curFile->yenc_filename, ".par2"))) {
@@ -455,7 +467,7 @@ void mw_post_rename(void) {
     if (smallest_parfile->segmentsSize > 1)
         smallest_parfile = NULL;    // the "main" segment shouldn't be larger than 1 message.
 
-    LOG_MESSAGE(true, "Renaming: smallest_parfile %s found, checking par2 for file names.", smallest_parfile == NULL ? "not " : "was");    
+    LOG_MESSAGE(false, "Renaming: smallest_parfile %s found, checking par2 for file names.", smallest_parfile == NULL ? "not " : "was");    
     if (smallest_parfile) {
         bool wasMainParFile;
         get_par2_filenames(smallest_parfile, &wasMainParFile);
@@ -475,93 +487,221 @@ void mw_post_rename(void) {
     }
 
     for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
-        LOG_MESSAGE(true, "Assembling file %i out of %i\r", filecnt+1, nzb_tree.max_files);
+        LOG_MESSAGE(false, "Assembling file %i out of %i\r", filecnt+1, nzb_tree.max_files);
         mw_join_segments(&nzb_tree.files[filecnt]);
+    }
+
+    // we can only do a integrity check if there's a parfile:
+    if (smallest_parfile) {
+        LOG_MESSAGE(false, "Verifying release with par2.");
+        check_repair_ok = mw_post_checkrepair( nzb_tree.rename_files_to == NZBRename_yEnc ? smallest_parfile->yenc_filename : smallest_parfile->filename );
+    }
+
+    if (pair_find(config_downloads, "unrarbin") && check_repair_ok) {
+        q_printf("Verify/Repair went successful, unpacking.\n");
+        mw_unrar();
     }
 }
 
-/*
-    // no par2 was found, it means to prefer the yEnc name over the nzb name
-    if (!smallest_parfile) {
-        for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
-            struct NZBFile *curFile = &nzb_tree.files[filecnt];
-            // now let's check if one of two possible strings has a filename in it.
-            char *nzb_name = NULL;
-            contains_filename(nzb_tree.files[filecnt].filename, &nzb_name);
-            char *yenc_name = NULL;
-            contains_filename(nzb_tree.files[filecnt].yenc_filename, &yenc_name);
-            char *oldFullName;
-            char *newFullName;
+/// @brief 
+/// @param firstrarvol 
+/// @return 
+unsigned int mw_get_rar_volumes(char *firstrarvol, char ***rar_volumes) {
+    extern struct NZB nzb_tree;
+    const PCRE2_SPTR archRE = (PCRE2_SPTR)"Archive: (.+)";
+    FILE *cmdOut = NULL;
+    pcre2_code *compRE;
+    pcre2_match_data *matchData;
+    int pcre_err;
+    PCRE2_SIZE startOffset = 0, errOffset;
+    char *inBuffer = NULL;
+    char temp[128];
+    size_t inBuffer_size = 0, read_size;
+    char **rv = NULL;
+    unsigned int rv_cnt = 0;
 
-            // only use nzb's filename if no yenc_filename was set (should never happen)!
-            if (!yenc_name && nzb_name) {
-                oldFullName = mprintfv("%s/%s", nzb_tree.download_destination, curFile->yenc_filename);
-                newFullName = mprintfv("%s/%s", nzb_tree.download_destination, curFile->filename);
-                rename(oldFullName, newFullName);
-                free (oldFullName);
-                free (newFullName);
-            }
-        }
-    } else {
-        bool is_yenc_name = true;
-        char *oldFullName;
-        char *newFullName;
-        bool isMainPar2;
-        // we have written using the yBegin name!
-        char *par2File = mprintfv("%s/%s", nzb_tree.download_destination, smallest_parfile->yenc_filename);
-        if (!get_par2_filenames(par2File, &isMainPar2)) {
-            LOG_MESSAGE(false, "Couldn't extract any file names from par2: %s", par2File);
-        } else
-            LOG_MESSAGE(false, "Found %i files in par2, comparing with yEnc/NZB Field...", par_filenames_length);
-        free (par2File);            
-        par2File = NULL;
-        // now just find a filename that don't end in par2 and look it up in the file table we've found!
-        for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
-            struct NZBFile *testfile = &nzb_tree.files[filecnt];
-            if ((!string_ends_width(testfile->filename, ".par2")) && (!string_ends_width(testfile->yenc_filename, ".par2"))) {
-                // ok we've found one - now let's check w. the list of par2
-                if (is_par2_list(testfile->filename))
-                    is_yenc_name = false;
-                else if (is_par2_list(testfile->yenc_filename))
-                    is_yenc_name = true;
-                LOG_MESSAGE(false, "Filename-Field validated as: %s", is_yenc_name == true ? "yenc_filename" : "filename");
-            }
-        }
-        // now, we should know if the par referes to a filenamein ybegin-name or nzb-name.
-        if (!is_yenc_name) {
-            for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
-                struct NZBFile *curFile = &nzb_tree.files[filecnt];
-                oldFullName = mprintfv("%s/%s", nzb_tree.download_destination, curFile->yenc_filename);
-                newFullName = mprintfv("%s/%s", nzb_tree.download_destination, curFile->filename);
-                int check = rename(oldFullName, newFullName);
-                if (check == -1)
-                    LOG_MESSAGE(false, "Couldn't rename from %s to %s: errno %i, %s", oldFullName, newFullName, errno, strerror(errno));
-                else
-                    LOG_MESSAGE(false, "Renamed \"%s\" to \"%s\"", curFile->yenc_filename, curFile->filename);
-                free (oldFullName);
-                free (newFullName);
+    char *fullcmd = mprintfv("%s ltb -v \"%s/%s\"", pair_find(config_downloads, "unrarbin"), nzb_tree.download_destination, firstrarvol);
+    cmdOut = popen(fullcmd, "r");
+    if (!cmdOut)
+        return 0;
+       
+    while ((read_size = fread(temp, 1, 128, cmdOut)) > 0) {
+        inBuffer = (char*)realloc(inBuffer, inBuffer_size+read_size+1);
+        memset(&inBuffer[inBuffer_size], 0, read_size+1);
+        memcpy(&inBuffer[inBuffer_size], temp, read_size);
+        inBuffer_size += read_size;
+    }
+    pclose(cmdOut);
+
+    compRE = pcre2_compile(archRE, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
+    matchData = pcre2_match_data_create_from_pattern(compRE, NULL);
+    startOffset = 0;
+    while (pcre2_match(compRE, (const unsigned char*)inBuffer, inBuffer_size, startOffset, 0, matchData, NULL) >= 0) {
+        PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(matchData);
+        rv = (char**)realloc(rv, sizeof(char*)*(rv_cnt+1));
+        rv[rv_cnt] = strndup(&inBuffer[ovector[2]], (int)ovector[3]-ovector[2]);
+        rv_cnt++;
+        startOffset = ovector[1];
+    }
+    *rar_volumes = rv;
+    return rv_cnt;
+}
+
+/// @brief 
+/// @param  
+void mw_unrar(void) {
+    extern struct NZB nzb_tree;
+    DIR*    dirList = NULL;
+    struct dirent   *file_in_dest_dir;
+    const PCRE2_SPTR partRE = (PCRE2_SPTR8)"part([0-9]+)";
+    pcre2_code *compRE;
+    pcre2_match_data *matchData;
+    int pcre_err;
+    PCRE2_SIZE errOffset;
+    char**  rar_volumes = NULL;
+    unsigned int rar_volumes_len = 0;
+
+    dirList = opendir(nzb_tree.download_destination);
+    if (!dirList) {
+        LOG_MESSAGE(false, "Couldn't opendir(%s), errno: %i, %s", nzb_tree.download_destination, errno, strerror(errno));
+        return;
+    }    
+
+    compRE = pcre2_compile(partRE, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
+    matchData = pcre2_match_data_create_from_pattern(compRE, NULL);
+
+    while ((file_in_dest_dir = readdir(dirList)) != NULL) {
+        if (file_in_dest_dir->d_type != DT_REG)
+            continue;
+        if (string_ends_width(file_in_dest_dir->d_name, ".rar")) {
+            // if there's a part[..] it's a multipart and we only have to work on part01
+            if (pcre2_match(compRE, (const unsigned char*)file_in_dest_dir->d_name, PCRE2_ZERO_TERMINATED, 0, 0, matchData, NULL)) {
+                PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(matchData);
+                char* numStr = strndup(&file_in_dest_dir->d_name[ovector[2]], ovector[3]-ovector[2]);
+                unsigned int partNum = atoi(numStr);
+                if (partNum == 1) {
+                    char *syscmd = mprintfv("%s x -idq -o+ \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
+                    char **tmp_volumes = NULL;
+                    int syscmd_rc;
+                    unsigned int tmp_volume_size;
+
+                    tmp_volume_size = mw_get_rar_volumes(file_in_dest_dir->d_name, &tmp_volumes); // keep the rar volume-names in mem.
+                    syscmd_rc = system(syscmd);
+                    if (WIFEXITED(syscmd_rc))
+                        syscmd_rc = WEXITSTATUS(syscmd_rc);
+                    if (syscmd_rc != 0) {
+                        LOG_MESSAGE(true, "%s returned %i", syscmd, syscmd_rc);
+                        if (tmp_volumes && (tmp_volume_size > 0)) {
+                            for (unsigned int c = 0; c < tmp_volume_size; c++)
+                                free (tmp_volumes[c]);
+                        }
+                        free (tmp_volumes);
+                    } else {
+                        LOG_MESSAGE(false, "unrared %s/%s, continuing.", nzb_tree.download_destination, file_in_dest_dir->d_name);
+                        // copy the volumes of the rar, to delete it later.
+                        if (tmp_volumes && (tmp_volume_size > 0)) {
+                            rar_volumes = (char**)realloc(rar_volumes, sizeof(char*)*(rar_volumes_len+tmp_volume_size));
+                            memcpy(&rar_volumes[rar_volumes_len], tmp_volumes, sizeof(char*)*tmp_volume_size);
+                            rar_volumes_len += tmp_volume_size;
+                        }
+                    }
+                    free (syscmd);
+                }
             }
         }
     }
-*/
 
-void mw_post_checkrepair(void) {
+    closedir(dirList);
+
+    for (unsigned int c = 0; c < rar_volumes_len; c++) {
+        char *fullpath = mprintfv("%s", rar_volumes[c]);
+        if (unlink(fullpath) != 0)
+            LOG_MESSAGE(false, "Failed to remove %s, errno %i, %s", fullpath, errno, strerror(errno));
+        else
+            LOG_MESSAGE(false, "Removed %s", fullpath);
+        free (rar_volumes[c]);
+    }
+
+    dirList = opendir(nzb_tree.download_destination);
+    if (dirList) {
+        while ((file_in_dest_dir = readdir(dirList)) != NULL) {
+            if ((file_in_dest_dir->d_type == DT_REG) && (string_ends_width(file_in_dest_dir->d_name, ".par2"))) {
+                char *unlinkfile = mprintfv("%s/%s", nzb_tree.download_destination, file_in_dest_dir->d_name);
+                if (unlink(unlinkfile) != 0)
+                    LOG_MESSAGE(false, "Failed to remove:%s, errno %i, %s", unlinkfile, errno, strerror(errno));
+                else
+                    LOG_MESSAGE(false, "Removed:%s", unlinkfile);
+                free (unlinkfile);
+            }
+        }
+        closedir (dirList);
+    }
+
+    // last, but not least
+
+    free (rar_volumes);
+}
+
+/// @brief runs validate/repair for releases w. par2 files
+/// @param parfile 
+/// @return 
+bool mw_post_checkrepair(char *parfile) {
     extern struct NZB nzb_tree;
     extern struct pair *config_downloads;
     char *syscheckcmd = NULL;
     char oldcwd[PATH_MAX];
+    int sysRc = 0;
+    uint8_t par2Rc;
 
     // if par2bin is not filled.. 
     if (!pair_find(config_downloads, "par2bin"))
-        return;
+        return true;    // true bc. try to unrar
 
     getcwd(oldcwd, PATH_MAX);
     //seems we have to chdir() into the directory where the par2 files are:
-    if (!chdir(nzb_tree.download_destination)) {
+    if (chdir(nzb_tree.download_destination) != 0) {
         LOG_MESSAGE(true, "Could not change to: %s!", nzb_tree.download_destination);
-        return;
+        return false;
     }
-    
+
+    /*  return codes:
+    0: Success.
+    1: Repairable damage found.
+    2: Irreparable damage found.
+    3: Invalid commandline arguments.
+    4: Parity file unusable.
+    5: Repair failed.
+    6: IO error.
+    7: Internal error.
+    8: Out of memory.
+    */
+
+    syscheckcmd = mprintfv("%s v \"%s/%s\" 2>&1 > /dev/null", pair_find(config_downloads, "par2bin"), nzb_tree.download_destination, parfile);
+    sysRc = system(syscheckcmd);
+    free (syscheckcmd);
+
+    if (WIFEXITED(sysRc))
+        par2Rc = WEXITSTATUS(sysRc);
+    else  {
+        LOG_MESSAGE(true, "par2 had some error => !WIFEXITED\n");
+        return false;
+    }
+
+    if (par2Rc == 0) {
+        q_printf("\nDownload finished, par2 verify finished without any error found to repair.\n");
+        return true;
+    } else if (par2Rc == 1) {
+        q_printf("\nDownload finished, but par2verify reported repairable errors, starting repair.\n");
+        syscheckcmd = mprintfv("%s r \"%s/%s\" 2>&1 > /dev/null", pair_find(config_downloads, "par2bin"), nzb_tree.download_destination, parfile);
+        sysRc = system(syscheckcmd);
+        free (syscheckcmd);
+        if (WEXITSTATUS(sysRc) != 0) {
+            LOG_MESSAGE(false, "par2repair reported error.");
+            return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 /// @brief 
@@ -583,130 +723,43 @@ void mw_print_overview(void) {
     extern struct NZB nzb_tree;
     uint64_t now = time(NULL);
     uint64_t secondspassed = (now - epoch_download_start) == 0 ? 1 : now - epoch_download_start;    
-        
-    printf ("NZB:%.15s\tSize:%s\t", nzb_tree.name, mw_val_to_hr_string(nzb_tree.release_size));
-    printf ("Downloaded:%s ", mw_val_to_hr_string(nzb_tree.release_downloaded));
+    static unsigned int maxLineLen = 0;
+    char *overview_text, *sizeString, *dlString, *speedString;
+    double pct_done = 0., pct_failed = 0.;
+    unsigned int curLineLen;
+
     if (nzb_tree.release_size > 0) {
-        double pct_done = (double)nzb_tree.release_downloaded / (double)nzb_tree.release_size;
+        pct_done = (double)nzb_tree.release_downloaded / (double)nzb_tree.release_size;
         pct_done *= 100.;
-        printf ("(%.2f%%)\t", pct_done);
-    }
-    printf ("Speed:%s/s\tThreads:%i\r", mw_val_to_hr_string(nzb_tree.release_downloaded / secondspassed), mw_max_threads);
-}
-
-/// @brief if the first file in the NZB is a .par2 file, get that - check if BODY <articleID> is possible? 
-/// @param  
-bool mw_prepare_download(void) {
-    extern struct NZB nzb_tree;
-    char        *buffer = NULL;
-    bool        isOk, is_mainPar;
-    char        *yEncStart, *yEncEnd, *binary = NULL;
-    size_t      binarySize = 0;
-    int         crcOk;
-    struct NZBFile *smallestpar = NULL;
-
-    // do we have files in the nzb ?
-    if (nzb_tree.max_files == 0) {
-        LOG_MESSAGE(true, "NZB didn't contain any files, exiting.");
-        return false;
     }
 
-    // find the smallest par2 file, if any.
-    for (unsigned int filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
-        if ((string_ends_width(nzb_tree.files[filecnt].filename, ".par2")) || (string_ends_width(nzb_tree.files[filecnt].yenc_filename, ".par2"))) {
-            if (!smallestpar) {
-                smallestpar = &nzb_tree.files[filecnt];
-                continue;
-            }
-            
-            if (smallestpar->file_size > nzb_tree.files[filecnt].file_size)
-                smallestpar = &nzb_tree.files[filecnt];
-        }
+    if (mw_expected_segments > 0) {
+        pct_failed = (double)(mw_expected_segments-mw_failed_segments)/(double)mw_expected_segments;
+        pct_failed *= 100.;
     }
 
-    // any PAR2 at all ?
-    if (!smallestpar)
-        return true;
+    sizeString = strdup(mw_val_to_hr_string(nzb_tree.release_size));
+    dlString = strdup(mw_val_to_hr_string(nzb_tree.release_downloaded));
+    speedString = strdup(mw_val_to_hr_string(nzb_tree.release_downloaded / secondspassed));
 
-    // ONLY support for 1-segmented-par. (aka "main")
-    if (smallestpar->segmentsSize > 1)
-        return true;
+    overview_text = mprintfv("NZB:%s, Size:%s, Downloaded: %s (%.2f%%) (%.2f%%), Speed:%s/s", 
+                    nzb_tree.display_name, sizeString, dlString, pct_done, pct_failed, speedString);  
+    
+    free (sizeString);
+    free (dlString);
+    free (speedString);
 
-    // blah connect, auth..
-    nntp_server_info.use_body = false;
-    if (!nntp_connect(&nntp_server_info)) {
-        LOG_MESSAGE(true, "Server check/prepare failed, exiting!");
-        return false;
+    curLineLen = strlen(overview_text);
+
+    if (maxLineLen < curLineLen)
+        maxLineLen = curLineLen;
+
+    printf (overview_text);
+    free (overview_text);
+
+    while (curLineLen < maxLineLen) {
+        printf (" ");
+        curLineLen++;
     }
-
-    if (!nntp_authenticate(&nntp_server_info, nntp_server_info.username, nntp_server_info.password)) {
-        LOG_MESSAGE(true, "Authentication failed!");
-        nntp_disconnect(&nntp_server_info);
-        return false;
-    }
-
-    // test if BODY <ID> works
-    if (!nntp_write(&nntp_server_info, NNTP_BODY, smallestpar->segments[0].articleID)) {
-        nntp_disconnect(&nntp_server_info);
-        LOG_MESSAGE(true, "Couldn't send request to server.");
-        return false;
-    }
-
-    nntp_read(&nntp_server_info, &buffer, &isOk);
-
-    if (!isOk) {
-        nntp_server_info.use_body = false;      // no body <id> use article <id>
-        // still try to read article!
-        if (buffer) free (buffer);
-        buffer = NULL;
-        nntp_disconnect(&nntp_server_info);
-        return false;
-    } else {
-        nntp_disconnect(&nntp_server_info);        
-        if (nntp_get_yenc_header_begin_end(buffer, &yEncStart, &yEncEnd)) {
-            binarySize = nntp_decode_yenc(yEncStart, &binary, &crcOk);
-            get_par2_filenames_from_memory(binary, binarySize, &is_mainPar);
-
-            // right now, we only can check if the NZB-Name is 
-        }
-        nntp_server_info.use_body = true;
-    }
-
-    LOG_MESSAGE(false, "preDownload tasks done.");
-
-    /*
-    if (has_first_par2) {
-        bool isMainPar;
-        LOG_MESSAGE(false, "First file in NZB was really a par2!");
-        // sweet...
-        if (nntp_get_yenc_header_begin_end(buffer, &yEncStart, &yEncEnd)) {
-            binarySize = nntp_decode_yenc(yEncStart, &binary, &crcOk);
-            // now get the par2-list.
-            if (get_par2_filenames_from_memory(binary, binarySize, &isMainPar))
-                nzb_tree.skip_recovery = true;  // we want only data, no recovery files.
-            for(unsigned int filecnt = 0 ; filecnt < nzb_tree.max_files; filecnt++) {
-                // we only have the nzb's entry.
-                if (!string_ends_width(nzb_tree.files[filecnt].filename, ".par2")) {
-                    if (is_par2_list(nzb_tree.files[filecnt].filename)) 
-                        nzb_tree.rename_files_to = NZBRename_NZB;
-                    else
-                        nzb_tree.rename_files_to = NZBRename_yEnc;
-                    break;
-                }
-            }
-            if (nzb_tree.rename_files_to == NZBRename_NZB) {
-                char *destfirstpar = mprintfv("%s/%s", nzb_tree.download_destination, nzb_tree.files[0].filename);
-                write_to_file(destfirstpar, (uint8_t*)binary, binarySize);
-            }
-            if (binary) free (binary);
-            if (buffer) free (buffer);
-        }
-    } else {
-        nzb_tree.skip_recovery = false;     // yeah get everything.
-        nzb_tree.rename_files_to = NZBRename_undefined;       // see xmlhandler.h
-    }
-    */ 
-
-    nntp_disconnect(&nntp_server_info);
-    return true;
+    printf ("\r");
 }

@@ -1,3 +1,7 @@
+/*
+ * Loads/parses the nzb file.
+ */
+
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -26,7 +30,7 @@ struct NZBSegment* nzb_tree_find_segment_from_file (struct NZBFile *haystack, un
 struct pair *config_server = NULL;
 struct pair *config_downloads = NULL;
 
-struct NZB  nzb_tree = { .files = NULL, .max_files = 0, .name = NULL, .release_size = 0, .current_file = 0, .release_downloaded = 0, .rename_files_to = 0, .main_par2 = NULL } ;
+struct NZB  nzb_tree = { .files = NULL, .max_files = 0, .name = NULL, .release_size = 0, .current_file = 0, .release_downloaded = 0, .rename_files_to = 0 } ;
 bool        parse_is_nzb_head = false;
 XML_Parser  nzbParser; 
 
@@ -249,6 +253,7 @@ char* pair_find(struct pair *keyval, char* needle) {
 /// @return success
 bool nzb_load(char *filename) {
     char *buffer = xml_load_file(filename);
+    char *p_name_start, *p_name_end;
     nzbParser = XML_ParserCreate(NULL);
     struct parse_userdata my_userdata =  { .file = NULL, .segment = NULL };
 
@@ -259,6 +264,12 @@ bool nzb_load(char *filename) {
         return false;
 
     nzb_tree.name = strdup(filename);
+
+    p_name_start = strrchr(filename, '/');
+    p_name_end = strrchr(filename, '.');
+
+    if (p_name_end > p_name_start)
+        nzb_tree.display_name = strndup(p_name_start+1, (int)(p_name_end-p_name_start)-1);
     
     XML_SetElementHandler(nzbParser, parse_nzb_start_element, parse_nzb_end_element);
     XML_SetCharacterDataHandler(nzbParser, parse_nzb_text_data);
@@ -284,6 +295,8 @@ void parse_nzb_element_file(const char **attribs, struct NZBFile* file) {
         if (strcmp(attribs[i], "subject") == 0) {
             if (contains_filename(attribs[i+1], NULL))
                 contains_filename(attribs[i+1], &file->filename);
+            else 
+                file->filename = strdup(attribs[i+1]);
             break;
         }
     }
@@ -459,30 +472,6 @@ unsigned int nzb_get_binary_position_of_segment (struct NZBFile *file, unsigned 
         rv += file->segments[i].bytes;
     }
         
-    return rv;
-}
-
-unsigned int nzb_get_highest_segment_number (struct NZBFile *file) {
-    unsigned int rv = 0;
-
-    for (unsigned int i = 0; i < file->segmentsSize; i++) {
-        if (rv < file->segments[i].number)
-            rv = file->segments[i].number;
-    }
-
-    return rv;
-}
-
-struct NZBSegment *nzb_get_segment_by_number (struct NZBFile *file, unsigned int segment_number) {
-    struct NZBSegment *rv = NULL;
-
-    for (unsigned int i = 0; i < file->segmentsSize; i++) {
-        if (file->segments[i].number == segment_number) {
-            rv = &file->segments[i];
-            break;
-        }
-    }
-
     return rv;
 }
 

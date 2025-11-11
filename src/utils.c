@@ -1,3 +1,6 @@
+/*
+ * debug/helper stuff
+ */
 #include "utils.h"
 
 const char *fmtFile = "%s %s%s";
@@ -26,7 +29,7 @@ void logMessage(char *file, unsigned int line, bool to_stderr, char *fmt, ...) {
     (void)line;
 
     if (!fOut)
-        fOut = fopen("/tmp/cnntp.log", "w");
+        fOut = fopen("/tmp/nzbweaver.log", "w");
     
     strftime(fmtTime, 255, "[%T] # ", restTm);      // # as seperator ? kinda meh...
 
@@ -54,10 +57,13 @@ void logMessage(char *file, unsigned int line, bool to_stderr, char *fmt, ...) {
         fflush(fOut);
     }
 
+#ifndef NDEBUG
     if (to_stderr)
         fprintf (stderr, fmtOut);
+#endif
 
     if (fmtOut) free (fmtOut);
+    if (fmtCaller) free (fmtCaller);
 }
 
 /// @brief converts to kb/mb/..

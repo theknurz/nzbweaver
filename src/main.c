@@ -7,7 +7,6 @@
 #include <openssl/err.h>
 #include <rapidyenc.h>
 
-
 #include "mindweaver.h"
 #include "nntp.h"
 #include "xmlhandler.h"
@@ -25,7 +24,7 @@ int max_threads = -1;
 bool quiet_output = false;
 
 // some predefines
-const char* def_configname = ".cnntp.xml";
+const char* def_configname = ".nzbweaver.cfg";
 const int def_max_threads = 25;
 
 // functions
@@ -37,7 +36,6 @@ void init_connection(void);
 
 int main(int argc, char **argv) {
     struct passwd* userInfo;
-    int x;
 
     setlocale(LC_ALL, "");
     atexit(cleanup);
@@ -45,11 +43,7 @@ int main(int argc, char **argv) {
     // copy basic information like our path..
     app_name = strdup(argv[0]);
     userInfo = getpwuid(getuid());
-    x = strlen(userInfo->pw_dir);
-    x += strlen(def_configname);
-    x += 2;
-    cfg_file = (char*)malloc(x);
-    sprintf(cfg_file, "%s/%s", userInfo->pw_dir, def_configname);
+    cfg_file = mprintfv("%s/%s", userInfo->pw_dir, def_configname);
 
     // check if user has passed nzb-file (at least..)
     parse_user_args(argc, argv);                
@@ -99,11 +93,11 @@ void parse_user_args(int argc, char **argv) {
             case 'n':   // the nzb file
                 nzb_file = strdup(optarg);
                 break;
-            case 's':
+            case 's': // prints the example-config
                 print_config();
                 exit (EXIT_SUCCESS);
                 break;
-            case 'q':
+            case 'q': // no output
                 quiet_output = true;
                 break;
             case 'h':   // help
@@ -120,17 +114,17 @@ void parse_user_args(int argc, char **argv) {
 
 void print_help(void) {
     printf ("%s - nzb downloader\n\n", app_name);
-    printf ("\t-c FILE\t\t-\tConfig File Name [%s]\n", cfg_file);
-    printf ("\t-t NUMBER\t-\tMax. Connections To Use [%i]\n", max_threads);
-    printf ("\t-n FILE\t\t-\tNZB File, Mandatory.\n");
-    printf ("\t-q\t\t-\tQuiet!\n");
-    printf ("\t-s\t\t-\tPrint default-config (%s -s > ~/.cnntp.xml)\n", app_name);
+    printf ("-c FILE\t\t-\tConfig File Name [%s]\n", cfg_file);
+    printf ("-t NUMBER\t-\tMax. Connections To Use [%i]\n", max_threads);
+    printf ("-n FILE\t\t-\tNZB File, Mandatory.\n");
+    printf ("-q\t\t-\tQuiet!\n");
+    printf ("-s\t\t-\tPrint default-config (%s -s > ~/.nzbweaver.cfg)\n", app_name);
 }
 
 void print_config(void) {
     printf ("<config>\n");
     printf ("<server address=\"best.news.server.com\" port=\"119\" ssl=\"false\" connection=\"5\" username=\"username\" password=\"password\"/>\n");
-    printf ("<download path=\"/my/download/drive/Downloads/\" unpack=\"/usr/bin/unrar\" repair=\"/usr/bin/par2\"/>\n");
+    printf ("<download path=\"/my/drive/Downloads/\" unrarbin=\"/usr/bin/unrar\" par2bin=\"/usr/bin/par2\" cancelthreshpct=\"90\"/>\n");
     printf ("</config>\n");
 }
 

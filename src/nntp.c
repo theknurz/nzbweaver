@@ -1,3 +1,6 @@
+/*
+ * Does the network and nntp work.
+ */
 #include <string.h>
 #include <pcre2.h>
 #include <arpa/inet.h>
@@ -387,6 +390,7 @@ size_t nntp_decode_yenc (char *encoded_header_buffer, char **outBinary, int *isC
         meta_begin = nntp_get_yenc_meta(&encoded_header_buffer[ovector[0]]);
         enc_data_start = ovector[3]+2;
     }
+    if (match_data) pcre2_match_data_free(match_data);
 
     if (pair_find(meta_begin, "part")) {
         match_data = pcre2_match_data_create_from_pattern(comp_re_part, NULL);
@@ -395,6 +399,7 @@ size_t nntp_decode_yenc (char *encoded_header_buffer, char **outBinary, int *isC
             meta_part = nntp_get_yenc_meta(&encoded_header_buffer[ovector[0]]);
             enc_data_start = ovector[3]+2; // skip \r\n
         }
+        if (match_data) pcre2_match_data_free(match_data);
     }
 
     match_data = pcre2_match_data_create_from_pattern(comp_re_end, NULL);
@@ -403,6 +408,7 @@ size_t nntp_decode_yenc (char *encoded_header_buffer, char **outBinary, int *isC
         meta_end = nntp_get_yenc_meta(&encoded_header_buffer[ovector[0]]);
         enc_data_end = ovector[0];
     }
+    if (match_data) pcre2_match_data_free(match_data);
 
     // with all the crlf and stuff, it's enought to reserve input encoded size as output-buffer:
     bufferOut = (char*)calloc(enc_data_end-enc_data_start, 1);
@@ -463,6 +469,8 @@ bool nntp_get_yenc_header_begin_end(char *encoded_buffer, char **yenc_data_begin
         *yenc_data_begin = &encoded_buffer[ovector[2]];
     } else
         *yenc_data_begin = NULL;
+        
+    if (match_data) pcre2_match_data_free(match_data);        
 
     match_data = pcre2_match_data_create_from_pattern(comp_re_start, NULL);
     if (pcre2_match(comp_re_end, (const unsigned char*)encoded_buffer, PCRE2_ZERO_TERMINATED, 0, 0, match_data, NULL) >= 0) {   
@@ -470,6 +478,8 @@ bool nntp_get_yenc_header_begin_end(char *encoded_buffer, char **yenc_data_begin
         *yenc_data_end = &encoded_buffer[ovector[3]];
     } else
         *yenc_data_end = NULL;
+
+    if (match_data) pcre2_match_data_free(match_data);
 
     if (!*yenc_data_begin || !*yenc_data_end)
         return false;

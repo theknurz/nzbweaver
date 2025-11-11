@@ -1,3 +1,7 @@
+/*
+ * Because nzb and yenc are perfectly working together,
+ * we parse the par2 file for the filenames
+ */
 #include "parfiles.h"
 
 // the magic sequence 
