@@ -554,12 +554,14 @@ void mw_unrar(void) {
     DIR*    dirList = NULL;
     struct dirent   *file_in_dest_dir;
     const PCRE2_SPTR partRE = (PCRE2_SPTR8)"part([0-9]+)";
-    pcre2_code *compRE;
-    pcre2_match_data *matchData;
+    const PCRE2_SPTR pwdRE = (PCRE2_SPTR8)"{(.+)}";
+    pcre2_code *compRE, *pwdcompRE;
+    pcre2_match_data *matchData, *pwdmatchData;
     int pcre_err;
     PCRE2_SIZE errOffset;
-    char**  rar_volumes = NULL;
+    char **rar_volumes = NULL;
     unsigned int rar_volumes_len = 0;
+    char *rar_password = NULL;
 
     dirList = opendir(nzb_tree.download_destination);
     if (!dirList) {
@@ -569,6 +571,9 @@ void mw_unrar(void) {
 
     compRE = pcre2_compile(partRE, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
     matchData = pcre2_match_data_create_from_pattern(compRE, NULL);
+
+    pwdcompRE = pcre2_compile(pwdRE, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
+    pwdmatchData = pcre2_match_data_create_from_pattern(pwdcompRE, NULL);
 
     while ((file_in_dest_dir = readdir(dirList)) != NULL) {
         if (file_in_dest_dir->d_type != DT_REG)
@@ -580,7 +585,15 @@ void mw_unrar(void) {
                 char* numStr = strndup(&file_in_dest_dir->d_name[ovector[2]], ovector[3]-ovector[2]);
                 unsigned int partNum = atoi(numStr);
                 if (partNum == 1) {
-                    char *syscmd = mprintfv("%s x -idq -o+ \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
+                    char *syscmd;
+                    if (pcre2_match(pwdcompRE, (const unsigned char*)nzb_tree.display_name, PCRE2_ZERO_TERMINATED, 0, 0, pwdmatchData, NULL)) {
+                        PCRE2_SIZE *pvector = pcre2_get_ovector_pointer(pwdmatchData);
+                        rar_password = strndup(&nzb_tree.display_name[pvector[2]], pvector[3]-pvector[2]);
+                        syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), rar_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
+                    } else {
+                        syscmd = mprintfv("%s x -idq -o+ \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
+                    }
+
                     char **tmp_volumes = NULL;
                     int syscmd_rc;
                     unsigned int tmp_volume_size;
