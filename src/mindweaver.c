@@ -580,13 +580,13 @@ void mw_unrar(void) {
             continue;
         if (string_ends_width(file_in_dest_dir->d_name, ".rar")) {
             // if there's a part[..] it's a multipart and we only have to work on part01
-            if (pcre2_match(compRE, (const unsigned char*)file_in_dest_dir->d_name, PCRE2_ZERO_TERMINATED, 0, 0, matchData, NULL)) {
+            if (pcre2_match(compRE, (const unsigned char*)file_in_dest_dir->d_name, PCRE2_ZERO_TERMINATED, 0, 0, matchData, NULL) >= 0) {
                 PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(matchData);
                 char* numStr = strndup(&file_in_dest_dir->d_name[ovector[2]], ovector[3]-ovector[2]);
                 unsigned int partNum = atoi(numStr);
                 if (partNum == 1) {
                     char *syscmd;
-                    if (pcre2_match(pwdcompRE, (const unsigned char*)nzb_tree.display_name, PCRE2_ZERO_TERMINATED, 0, 0, pwdmatchData, NULL)) {
+                    if (pcre2_match(pwdcompRE, (const unsigned char*)nzb_tree.display_name, PCRE2_ZERO_TERMINATED, 0, 0, pwdmatchData, NULL) >= 0) {
                         PCRE2_SIZE *pvector = pcre2_get_ovector_pointer(pwdmatchData);
                         rar_password = strndup(&nzb_tree.display_name[pvector[2]], pvector[3]-pvector[2]);
                         syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), rar_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
