@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
 }
 
 void parse_user_args(int argc, char **argv) {
-    const char *options="c:t:n:hsq";
+    const char *options="c:t:n:hsqr";
     int opt;
     
     while ((opt = getopt(argc, argv, options)) != -1) {
@@ -100,6 +100,9 @@ void parse_user_args(int argc, char **argv) {
             case 'q': // no output
                 quiet_output = true;
                 break;
+            case 'r':
+                mw_remove_nzb_after_unpack = true;
+                break;
             case 'h':   // help
                 if (nzb_file) free (nzb_file);
                 print_help();
@@ -119,6 +122,7 @@ void print_help(void) {
     printf ("-n FILE\t\t-\tNZB File, Mandatory.\n");
     printf ("-q\t\t-\tQuiet!\n");
     printf ("-s\t\t-\tPrint default-config (%s -s > ~/.nzbweaver.cfg)\n", app_name);
+    printf ("-r\t\t-\tRemove NZB file after unpacking\n");
 }
 
 void print_config(void) {

@@ -27,6 +27,7 @@ struct thread_user_data {
 
 extern unsigned int mw_max_threads;
 extern bool mw_draw_no_gui;
+extern bool mw_remove_nzb_after_unpack;
 
 bool mw_connect(char *address, uint16_t port, char *username, char *password, bool useSSL, unsigned int threads);
 void mw_loop(void);
@@ -43,4 +44,5 @@ void mw_unrar(void);
 unsigned int mw_get_rar_volumes(char *firstrarvol, char ***rar_volumes);
 bool mw_parse_yenc_header (char *yEncStart, struct NZBFile *curFile, uint64_t **filesize);
 bool mw_get_binary_from_article(struct thread_user_data *userData, struct NZBFile *curFile, struct NZBSegment *curSeg, char **buffer);
+char* mw_rar_password_provided(void);
 #endif 

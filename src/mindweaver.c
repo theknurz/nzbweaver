@@ -31,6 +31,7 @@ uint64_t        epoch_download_end;
 uint64_t        transfered_bytes;
 
 bool            mw_post_ok_operation = true;  
+bool            mw_remove_nzb_after_unpack = false;
 
 char            *mw_display_name = NULL;
 
@@ -519,9 +520,17 @@ unsigned int mw_get_rar_volumes(char *firstrarvol, char ***rar_volumes) {
     size_t inBuffer_size = 0, read_size;
     char **rv = NULL;
     unsigned int rv_cnt = 0;
+    char *syscmd;
+    char *rarPassWd = mw_rar_password_provided();
 
-    char *fullcmd = mprintfv("%s ltb -v \"%s/%s\"", pair_find(config_downloads, "unrarbin"), nzb_tree.download_destination, firstrarvol);
-    cmdOut = popen(fullcmd, "r");
+    // password-check:
+    if (rarPassWd) {
+        syscmd = mprintfv("%s ltb -p%s -v \"%s/%s\"", pair_find(config_downloads, "unrarbin"), rarPassWd, nzb_tree.download_destination, firstrarvol);
+    } else {
+        syscmd = mprintfv("%s ltb -v \"%s/%s\"", pair_find(config_downloads, "unrarbin"), nzb_tree.download_destination, firstrarvol);
+    }
+
+    cmdOut = popen(syscmd, "r");
     if (!cmdOut)
         return 0;
        
@@ -554,14 +563,13 @@ void mw_unrar(void) {
     DIR*    dirList = NULL;
     struct dirent   *file_in_dest_dir;
     const PCRE2_SPTR partRE = (PCRE2_SPTR8)"part([0-9]+)";
-    const PCRE2_SPTR pwdRE = (PCRE2_SPTR8)"{(.+)}";
-    pcre2_code *compRE, *pwdcompRE;
-    pcre2_match_data *matchData, *pwdmatchData;
+    pcre2_code *compRE;
+    pcre2_match_data *matchData;
     int pcre_err;
     PCRE2_SIZE errOffset;
     char **rar_volumes = NULL;
     unsigned int rar_volumes_len = 0;
-    char *rar_password = NULL;
+    bool unpack_ok = true;
 
     dirList = opendir(nzb_tree.download_destination);
     if (!dirList) {
@@ -571,9 +579,6 @@ void mw_unrar(void) {
 
     compRE = pcre2_compile(partRE, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
     matchData = pcre2_match_data_create_from_pattern(compRE, NULL);
-
-    pwdcompRE = pcre2_compile(pwdRE, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
-    pwdmatchData = pcre2_match_data_create_from_pattern(pwdcompRE, NULL);
 
     while ((file_in_dest_dir = readdir(dirList)) != NULL) {
         if (file_in_dest_dir->d_type != DT_REG)
@@ -586,10 +591,11 @@ void mw_unrar(void) {
                 unsigned int partNum = atoi(numStr);
                 if (partNum == 1) {
                     char *syscmd;
-                    if (pcre2_match(pwdcompRE, (const unsigned char*)nzb_tree.display_name, PCRE2_ZERO_TERMINATED, 0, 0, pwdmatchData, NULL) >= 0) {
-                        PCRE2_SIZE *pvector = pcre2_get_ovector_pointer(pwdmatchData);
-                        rar_password = strndup(&nzb_tree.display_name[pvector[2]], pvector[3]-pvector[2]);
-                        syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), rar_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
+                    char *rarPassWd = mw_rar_password_provided();
+
+                    // password-check:
+                    if (rarPassWd) {
+                        syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), rarPassWd, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
                     } else {
                         syscmd = mprintfv("%s x -idq -o+ \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
                     }
@@ -604,6 +610,7 @@ void mw_unrar(void) {
                         syscmd_rc = WEXITSTATUS(syscmd_rc);
                     if (syscmd_rc != 0) {
                         LOG_MESSAGE(true, "%s returned %i", syscmd, syscmd_rc);
+                        unpack_ok = false;
                         if (tmp_volumes && (tmp_volume_size > 0)) {
                             for (unsigned int c = 0; c < tmp_volume_size; c++)
                                 free (tmp_volumes[c]);
@@ -625,6 +632,9 @@ void mw_unrar(void) {
     }
 
     closedir(dirList);
+
+    if (unpack_ok && mw_remove_nzb_after_unpack)
+        unlink(nzb_tree.name);
 
     for (unsigned int c = 0; c < rar_volumes_len; c++) {
         char *fullpath = mprintfv("%s", rar_volumes[c]);
@@ -775,4 +785,32 @@ void mw_print_overview(void) {
         curLineLen++;
     }
     printf ("\r");
+}
+
+/// @brief checks if nzb or nzb-name password provided
+/// @param  -
+/// @return NULL if no passwd found or pointer to password.
+char* mw_rar_password_provided(void) {
+    extern struct NZB nzb_tree;    
+    extern char* nzb_meta_password;    
+    const PCRE2_SPTR pwdRE = (PCRE2_SPTR8)"{(.+)}";
+    pcre2_code *pwdcompRE;
+    pcre2_match_data *pwdmatchData;
+    int pcre_err;
+    PCRE2_SIZE errOffset;
+
+    pwdcompRE = pcre2_compile(pwdRE, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
+    pwdmatchData = pcre2_match_data_create_from_pattern(pwdcompRE, NULL);
+
+    if (pcre2_match(pwdcompRE, (const unsigned char*)nzb_tree.display_name, PCRE2_ZERO_TERMINATED, 0, 0, pwdmatchData, NULL) >= 0) {
+        PCRE2_SIZE *pvector = pcre2_get_ovector_pointer(pwdmatchData);
+        return strndup(&nzb_tree.display_name[pvector[2]], pvector[3]-pvector[2]);
+        // syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), rar_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
+    } else {
+        // password maybe set as meta-data ?
+        if (nzb_meta_password)
+            return nzb_meta_password;
+            // syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), nzb_meta_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
+    }
+    return NULL;
 }

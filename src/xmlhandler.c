@@ -34,6 +34,8 @@ struct NZB  nzb_tree = { .files = NULL, .max_files = 0, .name = NULL, .release_s
 bool        parse_is_nzb_head = false;
 XML_Parser  nzbParser; 
 
+char*       nzb_meta_password = NULL;
+
 pthread_mutex_t     nzb_tree_next_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 char *xml_load_file(char *filename) {
@@ -66,6 +68,7 @@ char *xml_load_file(char *filename) {
     return fileBuffer;
 
 error:
+    LOG_MESSAGE(true, "Couldn't open: %s, Error: %s (%i)", filename, strerror(errno), errno);
     if (inFile) 
         fclose(inFile);
     return NULL;
@@ -255,7 +258,7 @@ bool nzb_load(char *filename) {
     char *buffer = xml_load_file(filename);
     char *p_name_start, *p_name_end;
     nzbParser = XML_ParserCreate(NULL);
-    struct parse_userdata my_userdata =  { .file = NULL, .segment = NULL };
+    struct parse_userdata my_userdata =  { .file = NULL, .segment = NULL, .text_type = XMLText_ArticleID};
 
     if (!buffer)
         return false;
@@ -344,13 +347,19 @@ void parse_nzb_element_segment(void *userData, const char **attribs) {
 void parse_nzb_start_element(void *userData, const char *name, const char **attribs) {
     struct parse_userdata *data = (struct parse_userdata*)userData;
 
-    if (strcmp(name, "head") == 0) {
-        parse_is_nzb_head = true;
+    if (strcmp(name, "meta") == 0) {
+        for (int i = 0; attribs[i]; i+=2) {
+            if (strcasecmp(attribs[i], "type") == 0) {
+                if (strcasecmp(attribs[i+1], "password") == 0)
+                    data->text_type = XMLText_Password;
+            }
+        }
     } else if (strcmp(name, "file") == 0) {
         // begins a "<file..>":
         nzb_tree.files = (struct NZBFile*)realloc(nzb_tree.files, sizeof(struct NZBFile)*(nzb_tree.max_files+1));
         parse_nzb_element_file(attribs, &nzb_tree.files[nzb_tree.max_files]);
         data->file = &nzb_tree.files[nzb_tree.max_files];
+        data->text_type = XMLText_ArticleID;
         nzb_tree.max_files++;
     } else if (strcmp(name, "segment") == 0) {
         parse_nzb_element_segment(userData, attribs);
@@ -362,8 +371,9 @@ void parse_nzb_start_element(void *userData, const char *name, const char **attr
 /// @param name of the node
 void parse_nzb_end_element(void *userData, const char* name) {
     struct parse_userdata *data = (struct parse_userdata*)userData;    
-    if (strcmp(name, "head") == 0) {
+    if (strcmp(name, "meta") == 0) {
         parse_is_nzb_head = false;
+        data->text_type = XMLText_ArticleID;
     } else if (strcmp(name, "file") == 0) {
         data->file->remaining_segments = data->file->segmentsSize;
         data->file = NULL; // after file/>
@@ -381,18 +391,25 @@ void parse_nzb_text_data(void *userData, const XML_Char *s, int len) {
     bool isBlankText = true;
     char *text = strndup(s, len);
 
-    if (data->segment) {
-        if (text) {
-            for (int c = 0; c < len; c++) {
-                if (!isspace(text[c])) {
-                    isBlankText = false;
-                    break;
+    switch (data->text_type) {
+        case XMLText_ArticleID:
+            if (data->segment) {
+                if (text) {
+                    for (int c = 0; c < len; c++) {
+                        if (!isspace(text[c])) {
+                            isBlankText = false;
+                            break;
+                        }
+                    }
+                    free (text);            
+                    if (!isBlankText)
+                        data->segment->articleID = strndup(s, len);
                 }
             }
-            free (text);            
-            if (!isBlankText)
-                data->segment->articleID = strndup(s, len);
-        }
+            break;
+        case XMLText_Password:
+            nzb_meta_password = strndup(s, len);
+            break;
     }
 }
 

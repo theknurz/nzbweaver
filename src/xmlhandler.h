@@ -55,6 +55,11 @@ enum NZBRename {
     NZBRename_NZB = 1,
     NZBRename_yEnc
 };
+
+enum XMLTextType {
+    XMLText_Password = 0,
+    XMLText_ArticleID
+};
 // END 
 
 // A simple linked list 
@@ -65,6 +70,7 @@ struct pair {
 
 // The *userdata we'll pass to the xml-parser
 struct parse_userdata {
+    int     text_type; 
     struct NZBFile  *file;
     struct NZBSegment *segment;
 };
