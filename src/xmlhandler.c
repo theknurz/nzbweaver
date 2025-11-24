@@ -271,6 +271,9 @@ bool nzb_load(char *filename) {
     p_name_start = strrchr(filename, '/');
     p_name_end = strrchr(filename, '.');
 
+    if (!p_name_start)
+        p_name_start = filename;
+
     if (p_name_end > p_name_start)
         nzb_tree.display_name = strndup(p_name_start+1, (int)(p_name_end-p_name_start)-1);
     
