@@ -27,6 +27,7 @@ struct NZBFile {
     uint8_t         state;              // one of the NZBFile_State
     unsigned int    current_segment;    // moved from static to this point here
     char            *final_filename;    // a pointer either to filename or yenc_filename
+    bool            is_par_vol_file;    // if this is supposed to be downloaded in the first iteration thru the nzb file ?
 };
 
 struct NZB {
@@ -60,6 +61,13 @@ enum XMLTextType {
     XMLText_Password = 0,
     XMLText_ArticleID
 };
+
+enum NZBDownload_Pass {
+    NZBDownload_Content = 0,
+    NZBDownload_Recovery,
+    NZBDownload_Everything
+};
+
 // END 
 
 // A simple linked list 

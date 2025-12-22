@@ -32,7 +32,9 @@ uint64_t        transfered_bytes;
 
 bool            mw_post_ok_operation = true;  
 bool            mw_remove_nzb_after_unpack = false;
+bool            mw_volpar_after_incomplete = false;
 
+int             mw_download_type = NZBDownload_Everything;
 char            *mw_display_name = NULL;
 
 // functions:
@@ -85,6 +87,9 @@ bool mw_connect(char *address, uint16_t port, char *username, char *password, bo
 
     for (unsigned int curFile = 0; curFile < nzb_tree.max_files; curFile++)
         mw_expected_segments += nzb_tree.files[curFile].segmentsSize;
+
+    if (mw_volpar_after_incomplete)
+        mw_download_type = NZBDownload_Content; // download content first, not everything!
 
     epoch_download_start = time(NULL);
 
@@ -347,8 +352,12 @@ void mw_join_segments(struct NZBFile *curFile) {
     char *finalName;
 
     if (!curFile->yenc_filename) {
-        LOG_MESSAGE(true, "cannot join %s, missing yenc_filename", curFile->filename);
-        return;
+        LOG_MESSAGE(false, "Missing %s->yenc_filename, using nzb-provided.", curFile->filename);
+        if (!curFile->filename) {
+            LOG_MESSAGE(true, "cannot join %s, missing yenc_filename", curFile->filename);
+            return;
+        }
+        curFile->yenc_filename = strdup(curFile->filename);
     }
 
     finalName = nzb_tree.rename_files_to == NZBRename_NZB ?  curFile->filename : curFile->yenc_filename;
@@ -488,8 +497,15 @@ void mw_post_rename(void) {
     }
 
     for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
-        LOG_MESSAGE(false, "Assembling file %i out of %i\r", filecnt+1, nzb_tree.max_files);
-        mw_join_segments(&nzb_tree.files[filecnt]);
+        switch (mw_download_type) {
+            case NZBDownload_Content:
+                if (!nzb_tree.files[filecnt].is_par_vol_file)
+                    mw_join_segments(&nzb_tree.files[filecnt]);
+                break;
+            case NZBDownload_Everything:
+                mw_join_segments(&nzb_tree.files[filecnt]);
+                break;
+        }
     }
 
     // we can only do a integrity check if there's a parfile:
@@ -713,8 +729,16 @@ bool mw_post_checkrepair(char *parfile) {
     if (par2Rc == 0) {
         q_printf("\nDownload finished, par2 verify finished without any error found to repair.\n");
         return true;
-    } else if (par2Rc == 1) {
+    } else if ((par2Rc == 1) || (par2Rc == 2)) {
         q_printf("\nDownload finished, but par2verify reported repairable errors, starting repair.\n");
+
+        if (mw_download_type == NZBDownload_Content) {
+            mw_download_type = NZBDownload_Recovery;
+            q_printf("Content incomplete, fetching additional recovery volumes.\n");
+            mw_fetch_recovery_volumes();    // this blocks!
+        }
+
+        // if mw_fetch_recovery_volumes fails, still try to fix the content.
         syscheckcmd = mprintfv("%s r \"%s/%s\" 2>&1 > /dev/null", pair_find(config_downloads, "par2bin"), nzb_tree.download_destination, parfile);
         sysRc = system(syscheckcmd);
         free (syscheckcmd);
@@ -813,4 +837,50 @@ char* mw_rar_password_provided(void) {
             // syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), nzb_meta_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
     }
     return NULL;
+}
+
+/// @brief if only non-rec.vol were downloaded AND there are some rec-vols left, get them now.
+/// @param  -
+/// @return true if something was fetched from the server, false in every other case
+bool mw_fetch_recovery_volumes(void) {
+    extern struct NZB nzb_tree;
+    unsigned int max_recovery_segments = 0;
+    unsigned int start_threads;
+
+    // fetch recovery files only
+    mw_download_type = NZBDownload_Recovery;
+    nzb_tree.current_file = 0;  // "reset" the tree counter
+    mw_runLoop = true;  // just like in the other loop.
+
+    for (unsigned int fileCnt = 0; fileCnt < nzb_tree.max_files; fileCnt++) {
+        struct NZBFile *curFile = &nzb_tree.files[fileCnt];
+        if (!curFile->is_par_vol_file)
+            continue;
+        max_recovery_segments += curFile->segmentsSize;
+    }
+
+    start_threads = max_recovery_segments < mw_max_threads ? max_recovery_segments : mw_max_threads;
+
+    for (unsigned int i = 0; i < start_threads; i++) {
+        if (pthread_create(&mw_threads[i], NULL, mw_thread_work, (void*)&mw_thread_infos[i]) != 0) {
+            LOG_MESSAGE(false, "Couldn't pthread_create(..) in mw_fetch_recovery, download may be incomplete.");
+            return false;
+        }
+        pthread_detach(mw_threads[i]);
+    }
+
+    while (mw_runLoop) {
+        mw_print_overview();
+        usleep(100000);   // 10 updates per second ?
+    }
+
+    mw_print_overview();
+
+    // we have everything, iterate again and assemble VOL files:
+    for (unsigned int fileCnt = 0; fileCnt < nzb_tree.max_files; fileCnt++) {
+        if (nzb_tree.files[fileCnt].is_par_vol_file)
+            mw_join_segments(&nzb_tree.files[fileCnt]);
+    }
+
+    return true;
 }

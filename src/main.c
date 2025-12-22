@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
 }
 
 void parse_user_args(int argc, char **argv) {
-    const char *options="c:t:n:hsqr";
+    const char *options="c:t:n:hsqrv";
     int opt;
     
     while ((opt = getopt(argc, argv, options)) != -1) {
@@ -103,6 +103,9 @@ void parse_user_args(int argc, char **argv) {
             case 'r':
                 mw_remove_nzb_after_unpack = true;
                 break;
+            case 'v':
+                mw_volpar_after_incomplete = true;
+                break;
             case 'h':   // help
                 if (nzb_file) free (nzb_file);
                 print_help();
@@ -123,12 +126,13 @@ void print_help(void) {
     printf ("-q\t\t-\tQuiet!\n");
     printf ("-s\t\t-\tPrint default-config (%s -s > ~/.nzbweaver.cfg)\n", app_name);
     printf ("-r\t\t-\tRemove NZB file after unpacking\n");
+    printf ("-v\t\t-\tSkip PAR2 recovery files (VOL) if nothing to recvoers\n");
 }
 
 void print_config(void) {
     printf ("<config>\n");
     printf ("<server address=\"best.news.server.com\" port=\"119\" ssl=\"false\" connection=\"5\" username=\"username\" password=\"password\"/>\n");
-    printf ("<download path=\"/my/drive/Downloads/\" unrarbin=\"/usr/bin/unrar\" par2bin=\"/usr/bin/par2\" cancelthreshpct=\"90\"/>\n");
+    printf ("<download path=\"/my/drive/Downloads/\" unrarbin=\"/usr/bin/unrar\" par2bin=\"/usr/bin/par2\" cancelthreshpct=\"90\" skipvolfiles=\"false\"/>\n");
     printf ("</config>\n");
 }
 

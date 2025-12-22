@@ -259,6 +259,11 @@ bool nzb_load(char *filename) {
     char *p_name_start, *p_name_end;
     nzbParser = XML_ParserCreate(NULL);
     struct parse_userdata my_userdata =  { .file = NULL, .segment = NULL, .text_type = XMLText_ArticleID};
+    const PCRE2_SPTR RE_volpar = (PCRE2_SPTR8)"vol[0-9]{2,3}\\+[0-9]{2,3}.par2";
+    pcre2_code *volpar_comp;
+    pcre2_match_data *volpar_match;
+    int pcre_err;
+    PCRE2_SIZE errOffset;
 
     if (!buffer)
         return false;
@@ -285,6 +290,19 @@ bool nzb_load(char *filename) {
         XML_ParserFree(nzbParser);
         return false;
     }
+
+    // iterate thru the list, check if
+    // the filename contains vol[0-9]{2,3]}+[0-9]{2,3}.par2 
+    volpar_comp = pcre2_compile(RE_volpar, PCRE2_ZERO_TERMINATED, 0, &pcre_err, &errOffset, NULL);
+    volpar_match = pcre2_match_data_create_from_pattern(volpar_comp, NULL);
+
+    for (unsigned int fileCnt = 0; fileCnt < nzb_tree.max_files; fileCnt++) {
+        if (pcre2_match(volpar_comp, (const PCRE2_SPTR8)nzb_tree.files[fileCnt].filename, PCRE2_ZERO_TERMINATED, 0, 0, volpar_match, NULL) >= 0)
+            nzb_tree.files[fileCnt].is_par_vol_file = true;
+        else
+            nzb_tree.files[fileCnt].is_par_vol_file = false;
+    }
+
     return true;
 }
 
@@ -440,7 +458,8 @@ struct NZBSegment* nzb_tree_find_segment_from_file (struct NZBFile *haystack, un
 /// @param curSeg - poiner to pointer of current segment processing
 /// @return true = more segments/filenames
 bool nzb_tree_next_segment (struct NZBFile **inpFile, struct NZBSegment **inpSeg) {
-    struct NZBFile *curFile;    
+    struct NZBFile *curFile;
+    extern int mw_download_type;
 
     if (nzb_tree.current_file >= nzb_tree.max_files) {     // file idx out of bounds ?
         *inpFile = NULL;
@@ -459,21 +478,45 @@ bool nzb_tree_next_segment (struct NZBFile **inpFile, struct NZBSegment **inpSeg
         return true;
     } 
 
-    // increment current_file:
-    nzb_tree.current_file++;
-    if (nzb_tree.current_file < nzb_tree.max_files) { // still valid file ?
+    // it's over - so quit quick here:
+    nzb_tree.current_file++;    
+    if (nzb_tree.current_file >= nzb_tree.max_files) {
+        pthread_mutex_unlock(&nzb_tree_next_mutex);
+        *inpFile = NULL;
+        *inpSeg = NULL;
+        return false;
+    }
+
+    if (mw_download_type == NZBDownload_Everything) {
         curFile = &nzb_tree.files[nzb_tree.current_file];   // ... get next file
         *inpFile = curFile;
         *inpSeg = curFile->segments;
         curFile->current_segment++;
         pthread_mutex_unlock(&nzb_tree_next_mutex);
         return true;
-    } else {    // nah we're at the end after incrementing!
-        *inpFile = NULL;
-        *inpSeg = NULL;
-        pthread_mutex_unlock(&nzb_tree_next_mutex);
-        return false;
+    } else {
+        do {
+            curFile = &nzb_tree.files[nzb_tree.current_file];
+            *inpFile = curFile;
+            *inpSeg = curFile->segments;
+            // are vol files wanted ? And is the current file a recovery file ?
+            if ((mw_download_type == NZBDownload_Recovery) && curFile->is_par_vol_file) {
+                curFile->current_segment++;
+                pthread_mutex_unlock(&nzb_tree_next_mutex);
+                return true;
+            } else if ((mw_download_type == NZBDownload_Content) && !curFile->is_par_vol_file) { // and the other check
+                curFile->current_segment++;
+                pthread_mutex_unlock(&nzb_tree_next_mutex);
+                return true;
+            }
+            nzb_tree.current_file++;
+        } while (nzb_tree.current_file < nzb_tree.max_files);
     }
+    // nothing found AND we're at the end of the tree:
+    pthread_mutex_unlock(&nzb_tree_next_mutex);
+    *inpFile = NULL;
+    *inpSeg = NULL;
+    return false;
 }
 
 /// @brief returns the binary position of the segment with the (1-based)nzbnum
