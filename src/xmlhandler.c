@@ -280,7 +280,7 @@ bool nzb_load(char *filename) {
         p_name_start = filename;
 
     if (p_name_end > p_name_start)
-        nzb_tree.display_name = strndup(p_name_start+1, (int)(p_name_end-p_name_start)-1);
+        nzb_tree.display_name = strndup(p_name_start, (int)(p_name_end-p_name_start)-1);
     
     XML_SetElementHandler(nzbParser, parse_nzb_start_element, parse_nzb_end_element);
     XML_SetCharacterDataHandler(nzbParser, parse_nzb_text_data);

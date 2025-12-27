@@ -817,7 +817,7 @@ void mw_print_overview(void) {
 char* mw_rar_password_provided(void) {
     extern struct NZB nzb_tree;    
     extern char* nzb_meta_password;    
-    const PCRE2_SPTR pwdRE = (PCRE2_SPTR8)"{(.+)}";
+    const PCRE2_SPTR pwdRE = (PCRE2_SPTR8)"{{(.+)}}";
     pcre2_code *pwdcompRE;
     pcre2_match_data *pwdmatchData;
     int pcre_err;
@@ -829,12 +829,10 @@ char* mw_rar_password_provided(void) {
     if (pcre2_match(pwdcompRE, (const unsigned char*)nzb_tree.display_name, PCRE2_ZERO_TERMINATED, 0, 0, pwdmatchData, NULL) >= 0) {
         PCRE2_SIZE *pvector = pcre2_get_ovector_pointer(pwdmatchData);
         return strndup(&nzb_tree.display_name[pvector[2]], pvector[3]-pvector[2]);
-        // syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), rar_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
     } else {
         // password maybe set as meta-data ?
         if (nzb_meta_password)
             return nzb_meta_password;
-            // syscmd = mprintfv("%s x -idq -o+ -p%s \"%s/%s\" \"%s\"", pair_find(config_downloads, "unrarbin"), nzb_meta_password, nzb_tree.download_destination, file_in_dest_dir->d_name, nzb_tree.download_destination);
     }
     return NULL;
 }
