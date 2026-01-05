@@ -45,6 +45,15 @@ int main(int argc, char **argv) {
     userInfo = getpwuid(getuid());
     cfg_file = mprintfv("%s/%s", userInfo->pw_dir, def_configname);
 
+    // check if enough arguments have been passed:
+    if (argc < 2) {
+        fprintf(stderr, "Missing mandatory NZB-Filename.\n\n");
+        print_help();
+        return 1;
+    }
+
+    nzb_file = strdup(argv[1]);
+
     // check if user has passed nzb-file (at least..)
     parse_user_args(argc, argv);                
     if (!nzb_file)
@@ -81,6 +90,8 @@ int main(int argc, char **argv) {
 void parse_user_args(int argc, char **argv) {
     const char *options="c:t:n:hsqrv";
     int opt;
+
+    optind = 2;
     
     while ((opt = getopt(argc, argv, options)) != -1) {
         switch (opt) {
@@ -89,9 +100,6 @@ void parse_user_args(int argc, char **argv) {
                 break;
             case 't':   // max. threads 
                 mw_max_threads = atoi(optarg);
-                break;
-            case 'n':   // the nzb file
-                nzb_file = strdup(optarg);
                 break;
             case 's': // prints the example-config
                 print_config();
@@ -119,10 +127,9 @@ void parse_user_args(int argc, char **argv) {
 }
 
 void print_help(void) {
-    printf ("%s - nzb downloader\n\n", app_name);
+    printf ("%s <NZB Filename> [options] - NZB downloader\n\n", app_name);
     printf ("-c FILE\t\t-\tConfig File Name [%s]\n", cfg_file);
     printf ("-t NUMBER\t-\tMax. Connections To Use [%i]\n", max_threads);
-    printf ("-n FILE\t\t-\tNZB File, Mandatory.\n");
     printf ("-q\t\t-\tQuiet!\n");
     printf ("-s\t\t-\tPrint default-config (%s -s > ~/.nzbweaver.cfg)\n", app_name);
     printf ("-r\t\t-\tRemove NZB file after unpacking\n");
