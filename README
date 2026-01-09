@@ -43,7 +43,7 @@ Generate and edit a configuration:
 nzbweaver -s > ~/.nzbweaver.cfg
 
 Download a NZB:
-nzbweaver <file.nzb> [opt. options]
+nzbweaver [opt. options] <NZBFile>
 
 nzbweaver will:
 

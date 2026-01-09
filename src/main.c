@@ -22,6 +22,7 @@ char* nzb_file = NULL;
 
 int max_threads = -1;
 bool quiet_output = false;
+int cmd_rename = -1;
 
 // some predefines
 const char* def_configname = ".nzbweaver.cfg";
@@ -45,17 +46,8 @@ int main(int argc, char **argv) {
     userInfo = getpwuid(getuid());
     cfg_file = mprintfv("%s/%s", userInfo->pw_dir, def_configname);
 
-    // check if enough arguments have been passed:
-    if (argc < 2) {
-        fprintf(stderr, "Missing mandatory NZB-Filename.\n\n");
-        print_help();
-        return 1;
-    }
-
-    nzb_file = strdup(argv[1]);
-
     // check if user has passed nzb-file (at least..)
-    parse_user_args(argc, argv);                
+    parse_user_args(argc, argv);            
     if (!nzb_file)
         return EXIT_FAILURE;
 
@@ -88,10 +80,8 @@ int main(int argc, char **argv) {
 }
 
 void parse_user_args(int argc, char **argv) {
-    const char *options="c:t:n:hsqrv";
+    const char *options="+c:t:n:hsqrk";
     int opt;
-
-    optind = 2;
     
     while ((opt = getopt(argc, argv, options)) != -1) {
         switch (opt) {
@@ -111,8 +101,16 @@ void parse_user_args(int argc, char **argv) {
             case 'r':
                 mw_remove_nzb_after_unpack = true;
                 break;
-            case 'v':
+            case 'k':
                 mw_volpar_after_incomplete = true;
+                break;
+            case 'n':
+                cmd_rename = atoi(optarg);
+                if ((cmd_rename < RENAME_GUESS) || (cmd_rename > RENAME_FORCE_YENC)) {
+                    LOG_MESSAGE(true, "Error: -n has invalid value\n");
+                    print_help();
+                    exit (1);
+                }
                 break;
             case 'h':   // help
                 if (nzb_file) free (nzb_file);
@@ -121,25 +119,29 @@ void parse_user_args(int argc, char **argv) {
         }
     }
 
+    if (optind < argc)
+        nzb_file = strdup(argv[optind]);
+
     if (!nzb_file) {
-        LOG_MESSAGE(true, "Error: You have to pass the name of a NZB file with %s -n <file>\n", app_name);
+        LOG_MESSAGE(true, "Error: You have to pass the name of a NZB file with %s [options] <file>\n", app_name);
     }
 }
 
 void print_help(void) {
-    printf ("%s <NZB Filename> [options] - NZB downloader\n\n", app_name);
+    printf ("%s [options] <filename> - NZB downloader\n\n", app_name);
     printf ("-c FILE\t\t-\tConfig File Name [%s]\n", cfg_file);
     printf ("-t NUMBER\t-\tMax. Connections To Use [%i]\n", max_threads);
     printf ("-q\t\t-\tQuiet!\n");
     printf ("-s\t\t-\tPrint default-config (%s -s > ~/.nzbweaver.cfg)\n", app_name);
     printf ("-r\t\t-\tRemove NZB file after unpacking\n");
-    printf ("-v\t\t-\tSkip PAR2 recovery files (VOL) if nothing to recvoers\n");
+    printf ("-k\t\t-\tSkip PAR2 recovery files (VOL) if nothing to recvoers\n");
+    printf ("-n NUM\t\t-\tNaming: 0 = Guess (default)\n\t\t\t\t1 = Force NZB-Names\n\t\t\t\t2 = Force YEnc-Header-Names\n");
 }
 
 void print_config(void) {
     printf ("<config>\n");
     printf ("<server address=\"best.news.server.com\" port=\"119\" ssl=\"false\" connection=\"5\" username=\"username\" password=\"password\"/>\n");
-    printf ("<download path=\"/my/drive/Downloads/\" unrarbin=\"/usr/bin/unrar\" par2bin=\"/usr/bin/par2\" cancelthreshpct=\"90\" skipvolfiles=\"false\"/>\n");
+    printf ("<download path=\"/my/drive/Downloads/\" unrarbin=\"/usr/bin/unrar\" par2bin=\"/usr/bin/par2\" cancelthreshpct=\"90\" skipvolfiles=\"false\" naming=\"0\" />\n");
     printf ("</config>\n");
 }
 
@@ -194,6 +196,17 @@ void init_connection(void) {
             max_threads = def_max_threads;
     } else
         max_threads = mw_max_threads;
+    
+    if (cmd_rename != -1) {
+        mw_force_rename = cmd_rename;
+    } else {
+        if (pair_find(config_server, "naming")) {
+            int naming = atoi(pair_find(config_server, "naming"));
+            if ((naming < RENAME_GUESS) || (naming > RENAME_FORCE_YENC))
+                naming = RENAME_GUESS;
+            mw_force_rename = naming;
+        }
+    }
 
     mw_connect(address, port, username, password, useSSL, max_threads);
 }

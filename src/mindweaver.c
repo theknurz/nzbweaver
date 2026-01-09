@@ -37,6 +37,8 @@ bool            mw_volpar_after_incomplete = false;
 int             mw_download_type = NZBDownload_Everything;
 char            *mw_display_name = NULL;
 
+int             mw_force_rename = RENAME_GUESS;
+
 // functions:
 void *mw_thread_work (void* arg);
 void *mw_draw_display(void* arg);
@@ -457,44 +459,52 @@ void mw_post_rename(void) {
     struct NZBFile *smallest_parfile = NULL;
     bool check_repair_ok = true;
 
-    /* here we are: the filename game
-     * What I found about usenet, nzb, yenc-headers and par2:
-     * 1. IF we have par2, ALWAYS use the files in the FileDescr. Blocks of PAR2 - A L W A Y S
-     * 2. IF we don't have par2, prefer yEnc OVER nzb - but check for filename because
-     * 3. IF yEnc has not a valid filename use the NZB provided filename.    */
-    for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
-        struct NZBFile *curFile = &nzb_tree.files[filecnt];
-        if ((string_ends_width(curFile->filename, ".par2")) || (string_ends_width(curFile->yenc_filename, ".par2"))) {
-            if (!smallest_parfile) {
-                smallest_parfile = curFile;
-                continue;
-            }
-            if (smallest_parfile->file_size > curFile->file_size)
-                smallest_parfile = curFile;
-        }
-    }
-
-    if (smallest_parfile->segmentsSize > 1)
-        smallest_parfile = NULL;    // the "main" segment shouldn't be larger than 1 message.
-
-    LOG_MESSAGE(false, "Renaming: smallest_parfile %s found, checking par2 for file names.", smallest_parfile == NULL ? "not " : "was");    
-    if (smallest_parfile) {
-        bool wasMainParFile;
-        get_par2_filenames(smallest_parfile, &wasMainParFile);
-        nzb_tree.rename_files_to = NZBRename_undefined;
-
+    if (mw_force_rename == RENAME_GUESS) {
+        /* here we are: the filename game
+        * What I found about usenet, nzb, yenc-headers and par2:
+        * 1. IF we have par2, ALWAYS use the files in the FileDescr. Blocks of PAR2 - A L W A Y S
+        * 2. IF we don't have par2, prefer yEnc OVER nzb - but check for filename because
+        * 3. IF yEnc has not a valid filename use the NZB provided filename.    */
         for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
             struct NZBFile *curFile = &nzb_tree.files[filecnt];
-            if (is_par2_list(curFile->yenc_filename)) {
-                nzb_tree.rename_files_to = NZBRename_yEnc;
-                break;
-            }
-            if (is_par2_list(curFile->filename)) {
-                nzb_tree.rename_files_to = NZBRename_NZB;
-                break;
+            if ((string_ends_width(curFile->filename, ".par2")) || (string_ends_width(curFile->yenc_filename, ".par2"))) {
+                if (!smallest_parfile) {
+                    smallest_parfile = curFile;
+                    continue;
+                }
+                if (smallest_parfile->file_size > curFile->file_size)
+                    smallest_parfile = curFile;
             }
         }
-    }
+
+        if (smallest_parfile->segmentsSize > 1)
+            smallest_parfile = NULL;    // the "main" segment shouldn't be larger than 1 message.
+
+        LOG_MESSAGE(false, "Renaming: smallest_parfile %s found, checking par2 for file names.", smallest_parfile == NULL ? "not " : "was");    
+        if (smallest_parfile) {
+            bool wasMainParFile;
+            get_par2_filenames(smallest_parfile, &wasMainParFile);
+            nzb_tree.rename_files_to = NZBRename_undefined;
+
+            for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
+                struct NZBFile *curFile = &nzb_tree.files[filecnt];
+                if (is_par2_list(curFile->yenc_filename)) {
+                    nzb_tree.rename_files_to = NZBRename_yEnc;
+                    break;
+                }
+                if (is_par2_list(curFile->filename)) {
+                    nzb_tree.rename_files_to = NZBRename_NZB;
+                    break;
+                }
+            }
+            LOG_MESSAGE(false, "Guessed valid filenames: %s\n", nzb_tree.rename_files_to == NZBRename_NZB ? "NZB-XML based" : "yEnc-Header based");
+        } else {
+            LOG_MESSAGE(false, "No Index par2 found!\n");
+        }
+    } else if (mw_force_rename == RENAME_FORCE_NZB)
+        nzb_tree.rename_files_to = NZBRename_NZB;
+    else if (mw_force_rename == RENAME_FORCE_YENC)
+        nzb_tree.rename_files_to = NZBRename_yEnc;
 
     for (filecnt = 0; filecnt < nzb_tree.max_files; filecnt++) {
         switch (mw_download_type) {
@@ -507,6 +517,7 @@ void mw_post_rename(void) {
                 break;
         }
     }
+
 
     // we can only do a integrity check if there's a parfile:
     if (smallest_parfile) {

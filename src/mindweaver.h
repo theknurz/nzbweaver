@@ -25,10 +25,17 @@ struct thread_user_data {
     struct nntp_server *connection;
 };
 
+enum {
+    RENAME_GUESS = 0,
+    RENAME_FORCE_NZB = 1,
+    RENAME_FORCE_YENC = 2
+};
+
 extern unsigned int mw_max_threads;
 extern bool mw_draw_no_gui;
 extern bool mw_remove_nzb_after_unpack;
 extern bool mw_volpar_after_incomplete;
+extern int  mw_force_rename;
 
 bool mw_connect(char *address, uint16_t port, char *username, char *password, bool useSSL, unsigned int threads);
 void mw_loop(void);
